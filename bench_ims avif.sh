@@ -13,7 +13,7 @@ echo
 
 cnt=${#qualitys[@]}
 for ((i=0;i<cnt;i++)); do
-    qualitys[i]="${format}:-s/_/6/_/--min/_/$((${qualitys[i]} - 2))/_/--max/_/${qualitys[i]}/_/-a/_/end-usage=q/_/-a/_/color:enable-chroma-deltaq=1 "
+    qualitys[i]="${format}:-s/_/6/_/--min/_/$((${qualitys[i]} - 2))/_/--max/_/${qualitys[i]}/_/-a/_/end-usage=q/_/-a/_/color:enable-chroma-deltaq=1 "  # /_/-a/_/tune=butteraugli
 done
 
 bench() {
