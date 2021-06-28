@@ -202,7 +202,7 @@ impl ImageMetricsOptions {
         }
     }
     fn check_availability(&mut self) {
-        if is_program_in_path("butteraugli") {
+        if is_program_in_path("butteraugli_main") {
             self.butteraugli = true;
         }
     }
@@ -215,7 +215,7 @@ impl ImageMetricsOptions {
         m
     }
     fn butteraugli_run(&self, img_orig: &str, img_distort: &str) -> Vec<String> {
-        let out = std::process::Command::new("butteraugli")
+        let out = std::process::Command::new("butteraugli_main")
             .arg(img_orig)
             .arg(img_distort)
             .output()
