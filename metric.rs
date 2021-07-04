@@ -73,8 +73,6 @@ pub fn main() -> Result<(), Box<dyn Error>> {
         for metric in &metrics {
             csv_row.push(metric.as_str());
         }
-        println!("Header row: {:?}", &csv_row);
-        println!("{:?}", &csv_row);
         csv_writer.write_record(csv_row)?;
         csv_writer.flush()?;
     }
@@ -240,7 +238,7 @@ impl ImageMetricsOptions {
             .stdout;
         // println!("{:?}", String::from_utf8(out.to_owned()));
         out.lines()
-            .map(|l| l.unwrap_or_else(|_| "-1".into()))
+            .map(|l| l.unwrap_or_else(|_| "-".into()))
             .collect()
     }
     fn ssimulacra_run(&self, original: &str, distorted: &str) -> String {
@@ -252,7 +250,7 @@ impl ImageMetricsOptions {
             .stdout;
         out.lines()
             .next()
-            .unwrap_or_else(|| Result::Ok("-1".into()))
+            .unwrap_or_else(|| Result::Ok("-".into()))
             .unwrap()
     }
 }
