@@ -42,9 +42,8 @@ pub fn main() -> Result<(), Box<dyn Error>> {
     let csv_path = &opt.csv_path;
 
     let mut opt_metrics = ImageMetricsOptions::new();
-    if opt.do_metrics {
+    if opt.do_metrics && opt_metrics.check_availability() {
         opt_metrics.do_metrics = true;
-        opt_metrics.check_availability();
     }
 
     let mut images = opt.input.to_owned();
@@ -75,6 +74,7 @@ pub fn main() -> Result<(), Box<dyn Error>> {
             csv_row.push(metric.as_str());
         }
         println!("Header row: {:?}", &csv_row);
+        println!("{:?}", &csv_row);
         csv_writer.write_record(csv_row)?;
         csv_writer.flush()?;
     }
@@ -152,14 +152,18 @@ fn process_image(
             csv_row.push(buff_filesize.to_string());
             csv_row.push(buff_bpp.to_string());
             if opt_metrics.do_metrics {
-                let buff_img_decoded = buff.image_decode();
+                let img_distorted = buff.image_decode();
+                let img_distorted_path = img_distorted.path().to_str().unwrap().to_string();
                 if opt_metrics.butteraugli {
-                    let m =
-                        opt_metrics.butteraugli_run(img, buff_img_decoded.path().to_str().unwrap());
+                    let m = opt_metrics.butteraugli_run(&img, &img_distorted_path);
                     csv_row.push(m[0].to_owned());
                     csv_row.push(m[1].split_once(":").unwrap().1.to_owned());
-                    buff_img_decoded.close().unwrap();
                 }
+                if opt_metrics.ssimulacra {
+                    let m = opt_metrics.ssimulacra_run(&img, &img_distorted_path);
+                    csv_row.push(m);
+                }
+                img_distorted.close().unwrap()
             }
             let w = csv_writer.as_mut().unwrap();
             w.write_record(&csv_row)?;
@@ -192,6 +196,7 @@ fn process_image(
 struct ImageMetricsOptions {
     do_metrics: bool,
     butteraugli: bool,
+    ssimulacra: bool,
 }
 
 impl ImageMetricsOptions {
@@ -199,30 +204,56 @@ impl ImageMetricsOptions {
         ImageMetricsOptions {
             do_metrics: false,
             butteraugli: false,
+            ssimulacra: false,
         }
     }
-    fn check_availability(&mut self) {
+    /// Checks the metrics avaibility in path and sets the corresponding struct field to `true`
+    /// # Returns
+    /// `1` if any metric is avaible
+    fn check_availability(&mut self) -> bool {
         if is_program_in_path("butteraugli_main") {
             self.butteraugli = true;
         }
+        if is_program_in_path("ssimulacra") {
+            self.ssimulacra = true;
+        }
+        self.list_avaible().len().ne(&0)
     }
+    /// returns a vec of avaible metrics
     fn list_avaible(&self) -> Vec<String> {
         let mut m: Vec<String> = Vec::new();
         if self.butteraugli {
             m.push("butteraugli max norm".into());
             m.push("butteraugli pnorm".into());
         }
+        if self.ssimulacra {
+            m.push("ssimulacra".into());
+        }
         m
     }
-    fn butteraugli_run(&self, img_orig: &str, img_distort: &str) -> Vec<String> {
+    fn butteraugli_run(&self, original: &str, distorted: &str) -> Vec<String> {
         let out = std::process::Command::new("butteraugli_main")
-            .arg(img_orig)
-            .arg(img_distort)
+            .arg(original)
+            .arg(distorted)
             .output()
             .unwrap()
             .stdout;
         // println!("{:?}", String::from_utf8(out.to_owned()));
-        out.lines().map(|l| l.unwrap()).collect()
+        out.lines()
+            .map(|l| l.unwrap_or_else(|_| "-1".into()))
+            .collect()
+    }
+    fn ssimulacra_run(&self, original: &str, distorted: &str) -> String {
+        let out = std::process::Command::new("ssimulacra")
+            .arg(original)
+            .arg(distorted)
+            .output()
+            .unwrap()
+            .stdout;
+        out.lines()
+            .next()
+            .unwrap_or_else(|| Result::Ok("-1".into()))
+            .unwrap()
     }
 }
 
@@ -352,11 +383,8 @@ fn byte2size(num: u64) -> String {
 }
 
 fn is_program_in_path(program: &str) -> bool {
-    match std::process::Command::new(program)
+    std::process::Command::new(program)
         .spawn()
         .and_then(|mut x| x.kill())
-    {
-        Ok(_) => true,
-        Err(_) => false,
-    }
+        .is_ok()
 }
