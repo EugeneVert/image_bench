@@ -53,6 +53,13 @@ fi
 # run 'metric' for every file in image dir
 cd ./images || exit
 for i in ./* ; do
+    i_ext=${i##*\.}
+    i_is_image=$(grep -F -x "$i_ext" <<EOF
+png
+jpg
+EOF
+)
+    if [[ ! "$i_is_image" ]]; then continue; fi
     ../metric --csv --metrics "$i" -c "${qualitys[@]}" --csv_path "../$out_dir/$i.csv"
 done
 cd ..
