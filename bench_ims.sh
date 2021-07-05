@@ -6,12 +6,12 @@ cmdargs="$3"
 
 echo "qualitys:"
 case "$format" in
-    "cjxl")
+    "cjxl" | "cwebp")
         # for ((j=5;j<=75;j+=5))
         # do
         #     qualitys=("${qualitys[@]}" "$j")
         # done
-        for j in $(seq 65 1 85)
+        for j in $(seq 65 2 85)
         do
             qualitys=("${qualitys[@]}" "$j")
         done
@@ -30,7 +30,7 @@ case "$format" in
         done
         ;;
     "avif")
-        for j in $(seq 2 1 23)
+        for j in $(seq 2 2 32)
         do
             qualitys=("${qualitys[@]}" "$j")
         done
@@ -40,7 +40,7 @@ case "$format" in
             qualitys[i]="${format}:--min $((qualitys[i] - 2)) --max ${qualitys[i]}$cmdargs "
         done
         ;;
-    *) echo "Avaible formats: cjxl, avif"; exit
+    *) echo "Avaible formats: cjxl, avif, cwepb"; exit
 esac
 echo
 
