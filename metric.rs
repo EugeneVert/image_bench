@@ -2,7 +2,6 @@ use std::{
     error::Error,
     io::{BufRead, Write},
     path::Path,
-    str::FromStr,
 };
 
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
@@ -17,6 +16,10 @@ struct Opt {
     input: Vec<String>,
     #[structopt(short, takes_value = true, default_value = "./out")]
     out_dir: std::path::PathBuf,
+    /// avaible presets:    {n}
+    /// "cjxl:{args}", "avif:{args}"   {n}
+    /// custom cmd format:  {n}
+    /// "{encoder}>:{decoder}>:{extension}>:{output_from_stdout [0;1]}:>{args}"
     #[structopt(short, required = true)]
     cmds: Vec<String>,
     #[structopt(short, long, default_value = "10")]
@@ -95,16 +98,15 @@ fn process_image(
     let img_filesize = Path::new(img).metadata().unwrap().len() as u32;
     let img_dimensions = image::image_dimensions(&img)?;
     let px_count = img_dimensions.0 * img_dimensions.1;
-
     let out_dir = &opt.out_dir;
+
     // generate results in ImageBuffers for each cmd
     let enc_img_buffers: Vec<ImageBuffer> = opt
         .cmds
         .par_iter()
         .map(|cmd| {
-            let cmd = cmd.replace("/_/", " ");
-            let mut buff = ImageBuffer::new(&cmd);
-            buff.image_generate(&img);
+            let mut buff = ImageBuffer::new();
+            buff.image_generate(&img, &cmd);
             buff
         })
         .collect();
@@ -134,7 +136,7 @@ fn process_image(
         let percentage_of_original = format!("{:.2}", (100 * buff_filesize / img_filesize));
         println!(
             "{}\n{} --> {}\t{:6.2}bpp\t{:>6.2}s \t{}%",
-            &buff.cmd,
+            &buff.get_cmd(),
             byte2size(img_filesize as u64),
             byte2size(buff_filesize as u64),
             &buff_bpp,
@@ -144,7 +146,7 @@ fn process_image(
 
         if save_csv {
             csv_row.push(img.to_string());
-            csv_row.push(buff.cmd.to_string());
+            csv_row.push(buff.get_cmd());
             csv_row.push(img_filesize.to_string());
             csv_row.push(px_count.to_string());
             csv_row.push(buff_filesize.to_string());
@@ -258,16 +260,24 @@ impl ImageMetricsOptions {
 #[derive(Debug, Clone)]
 struct ImageBuffer {
     image: BytesIO,
-    cmd: String,
+    cmd_enc: String,
+    cmd_enc_args: Vec<String>,
+    cmd_enc_output_from_stdout: bool,
+    cmd_dec: String,
+    cmd_dec_args: Vec<String>,
     ext: String,
     ex_time: core::time::Duration,
 }
 
 impl ImageBuffer {
-    fn new(cmd_in: &str) -> ImageBuffer {
+    fn new() -> ImageBuffer {
         ImageBuffer {
             image: Vec::new(),
-            cmd: String::from(cmd_in),
+            cmd_enc: String::new(),
+            cmd_enc_args: Vec::new(),
+            cmd_enc_output_from_stdout: false,
+            cmd_dec: String::new(),
+            cmd_dec_args: Vec::new(),
             ext: String::new(),
             ex_time: core::time::Duration::new(0, 0),
         }
@@ -277,79 +287,113 @@ impl ImageBuffer {
         core::mem::size_of_val(&self.image[..])
     }
 
-    fn set_ext(&mut self, i: &str) {
-        self.ext = String::from_str(i).unwrap();
+    fn get_cmd(&self) -> String {
+        self.cmd_enc.to_string() + " " + &self.cmd_enc_args.join(" ")
     }
 
-    fn image_generate(&mut self, img_path: &str) {
-        let cmd_cmd = self.cmd.split_once(":").expect("Cmd argument error").0;
-        // for i in cmd_args {
-        //     match i {
-        //         "alpha" =>
-        //     }
-        // }
+    fn image_generate(&mut self, img_path: &str, cmd: &str) {
+        let cmd_args: Vec<String> = cmd.split(">:").map(|s| s.to_owned()).collect();
         let time_start = std::time::Instant::now();
-        match cmd_cmd {
-            "image" => {}
-            "jpeg" => self.gen_from_cmd(img_path, "cmozjpeg", "jpg", true),
-            "cjxl" => self.gen_from_cmd(img_path, "cjxl", "jxl", false),
-            "avif" => self.gen_from_cmd(img_path, "avifenc", "avif", false),
-            "cwebp" => self.gen_from_cmd(img_path, "cwebp", "webp", false),
-            _ => {
-                panic!("match error, cmd '{}' not supported", &cmd_cmd)
-            }
+
+        if cmd_args.len().eq(&1) {
+            self.image_generate_preset(img_path, cmd);
+        } else {
+            self.image_generate_custom(img_path, cmd_args);
         }
         self.ex_time = time_start.elapsed();
+    }
+
+    fn image_generate_preset(&mut self, img_path: &str, cmd: &str) {
+        let cmd_preset = cmd.split_once(":").expect("Cmd argument error").0;
+        self.cmd_enc_args = cmd
+            .split_once(":")
+            .unwrap()
+            .1
+            .split(' ')
+            .map(|s| s.to_owned())
+            .collect();
+        match cmd_preset {
+            "jpeg" => {
+                self.ext = "jpg".into();
+                self.cmd_enc = "cjpeg".into();
+                self.cmd_dec = "djpeg".into();
+                self.cmd_enc_output_from_stdout = true;
+            }
+            "cjxl" => {
+                self.ext = "jxl".into();
+                self.cmd_enc = "cjxl".into();
+                self.cmd_dec = "djxl".into();
+            }
+            "avif" => {
+                self.ext = "avif".into();
+                self.cmd_enc = "avifenc".into();
+                self.cmd_dec = "avifdec".into();
+            }
+            "cwebp" => {
+                self.ext = "webp".into();
+                self.cmd_enc = "cwebp".into();
+                self.cmd_dec = "dwebp".into();
+                self.cmd_dec_args = vec!["-o".into()];
+            }
+            _ => panic!("match error, cmd '{}' not supported", &cmd_preset),
+        }
+        self.gen_from_cmd(img_path);
+    }
+
+    fn image_generate_custom(&mut self, img_path: &str, cmd_args: Vec<String>) {
+        self.cmd_enc_args = cmd_args
+            .get(4)
+            .unwrap()
+            .split(' ')
+            .map(|s| s.to_owned())
+            .collect();
+        self.ext = cmd_args.get(0).unwrap().into();
+        self.cmd_enc = cmd_args.get(1).unwrap().into();
+        self.cmd_dec = cmd_args.get(2).unwrap().into();
+        self.cmd_enc_output_from_stdout = cmd_args.get(3).unwrap().parse::<u8>().unwrap().ne(&0);
+        self.gen_from_cmd(img_path);
     }
 
     fn image_decode(&self) -> tempfile::NamedTempFile {
         let mut tf = tempfile::NamedTempFile::new().unwrap();
         let tf_out = tempfile::Builder::new().suffix(".png").tempfile().unwrap();
         tf.write_all(&self.image).unwrap();
-        let decoder = match self.ext.as_str() {
-            "jxl" => "djxl",
-            "avif" => "avifdec",
-            _ => todo!(),
-        };
-        std::process::Command::new(decoder)
+        std::process::Command::new(&self.cmd_dec)
             .arg(tf.path())
+            .args(&self.cmd_dec_args)
             .arg(tf_out.path())
             .output()
             .unwrap();
         tf_out
     }
 
-    fn gen_from_cmd(&mut self, img_path: &str, cmd: &str, ext: &str, img_from_stdout: bool) {
-        let mut cmd_args: Vec<&str> = self.cmd.split_once(":").unwrap().1.split(' ').collect();
+    fn gen_from_cmd(&mut self, img_path: &str) {
         // no arguments -> return None
-        if cmd_args.contains(&"") {
-            cmd_args.pop();
+        if self.cmd_enc_args.contains(&"".into()) {
+            self.cmd_enc_args.pop();
         }
-
-        if img_from_stdout {
-            let output = std::process::Command::new(cmd)
-                .args(cmd_args)
+        if self.cmd_enc_output_from_stdout {
+            let output = std::process::Command::new(&self.cmd_enc)
+                .args(&self.cmd_enc_args)
                 .arg(img_path)
                 .output()
                 .unwrap();
             self.image = output.stdout;
         } else {
             let buffer = tempfile::Builder::new()
-                .suffix(&format!(".{}", ext))
+                .suffix(&format!(".{}", self.ext))
                 .tempfile()
                 .unwrap();
-            std::process::Command::new(cmd)
-                .args(cmd_args)
+            std::process::Command::new(&self.cmd_enc)
                 .arg(img_path)
+                .args(&self.cmd_enc_args)
                 .arg(buffer.path())
                 .output()
                 .unwrap();
             self.image = std::fs::read(buffer.path()).unwrap();
             buffer.close().unwrap();
+            // println!("{}", std::str::from_utf8(&output.stderr).unwrap());
         }
-        self.set_ext(ext);
-
-        // println!("{}", std::str::from_utf8(&output.stderr).unwrap());
     }
 }
 
