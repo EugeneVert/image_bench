@@ -96,7 +96,7 @@ fn process_image(
 ) -> Result<(), Box<dyn Error>> {
     println!("{}", &img);
     let img_filesize = Path::new(img).metadata().unwrap().len() as u32;
-    let img_dimensions = image::image_dimensions(&img)?;
+    let img_dimensions = get_image_size(&img)?;
     let px_count = img_dimensions.0 * img_dimensions.1;
     let out_dir = &opt.out_dir;
 
@@ -118,8 +118,7 @@ fn process_image(
         let csv_file = std::fs::OpenOptions::new()
             .write(true)
             .append(true)
-            .open(csv_path)
-            .unwrap();
+            .open(csv_path)?;
         Some(
             csv::WriterBuilder::new()
                 .delimiter(b'\t')
@@ -152,18 +151,20 @@ fn process_image(
             csv_row.push(buff_filesize.to_string());
             csv_row.push(buff_bpp.to_string());
             if opt_metrics.do_metrics {
-                let img_distorted = buff.image_decode();
-                let img_distorted_path = img_distorted.path().to_str().unwrap().to_string();
+                let img_distorted = buff.image_decode()?;
+                let img_distorted_wa = image_remove_alpha(img_distorted.path())?;
+                let img_distorted_path = img_distorted_wa.path().to_str().unwrap().to_string();
+                img_distorted.close()?;
                 if opt_metrics.butteraugli {
-                    let m = opt_metrics.butteraugli_run(&img, &img_distorted_path);
+                    let m = opt_metrics.butteraugli_run(&img, &img_distorted_path)?;
                     csv_row.push(m[0].to_owned());
                     csv_row.push(m[1].split_once(":").unwrap().1.to_owned());
                 }
                 if opt_metrics.ssimulacra {
-                    let m = opt_metrics.ssimulacra_run(&img, &img_distorted_path);
+                    let m = opt_metrics.ssimulacra_run(&img, &img_distorted_path)?;
                     csv_row.push(m);
                 }
-                img_distorted.close().unwrap()
+                img_distorted_wa.close()?;
             }
             let w = csv_writer.as_mut().unwrap();
             w.write_record(&csv_row)?;
@@ -182,7 +183,7 @@ fn process_image(
                 &buff.ext
             ));
             let mut f = std::fs::File::create(save_path)?;
-            f.write_all(&buff.image[..]).unwrap();
+            f.write_all(&buff.image[..])?;
             continue;
         }
     }
@@ -231,29 +232,34 @@ impl ImageMetricsOptions {
         }
         m
     }
-    fn butteraugli_run(&self, original: &str, distorted: &str) -> Vec<String> {
-        let out = std::process::Command::new("butteraugli_main")
+    fn butteraugli_run(
+        &self,
+        original: &str,
+        distorted: &str,
+    ) -> Result<Vec<String>, Box<dyn Error>> {
+        let outp = std::process::Command::new("butteraugli_main")
             .arg(original)
             .arg(distorted)
-            .output()
-            .unwrap()
-            .stdout;
-        // println!("{:?}", String::from_utf8(out.to_owned()));
-        out.lines()
+            .output()?;
+        command_print_if_error(&outp)?;
+        Ok(outp
+            .stdout
+            .lines()
             .map(|l| l.unwrap_or_else(|_| "-".into()))
-            .collect()
+            .collect())
     }
-    fn ssimulacra_run(&self, original: &str, distorted: &str) -> String {
-        let out = std::process::Command::new("ssimulacra")
+    fn ssimulacra_run(&self, original: &str, distorted: &str) -> Result<String, Box<dyn Error>> {
+        let outp = std::process::Command::new("ssimulacra")
             .arg(original)
             .arg(distorted)
-            .output()
-            .unwrap()
-            .stdout;
-        out.lines()
+            .output()?;
+        command_print_if_error(&outp)?;
+        Ok(outp
+            .stdout
+            .lines()
             .next()
             .unwrap_or_else(|| Result::Ok("-".into()))
-            .unwrap()
+            .unwrap())
     }
 }
 
@@ -337,7 +343,7 @@ impl ImageBuffer {
             }
             _ => panic!("match error, cmd '{}' not supported", &cmd_preset),
         }
-        self.gen_from_cmd(img_path);
+        self.gen_from_cmd(img_path).unwrap();
     }
 
     fn image_generate_custom(&mut self, img_path: &str, cmd_args: Vec<String>) {
@@ -351,23 +357,23 @@ impl ImageBuffer {
         self.cmd_enc = cmd_args.get(1).unwrap().into();
         self.cmd_dec = cmd_args.get(2).unwrap().into();
         self.cmd_enc_output_from_stdout = cmd_args.get(3).unwrap().parse::<u8>().unwrap().ne(&0);
-        self.gen_from_cmd(img_path);
+        self.gen_from_cmd(img_path).unwrap();
     }
 
-    fn image_decode(&self) -> tempfile::NamedTempFile {
-        let mut tf = tempfile::NamedTempFile::new().unwrap();
-        let tf_out = tempfile::Builder::new().suffix(".png").tempfile().unwrap();
-        tf.write_all(&self.image).unwrap();
-        std::process::Command::new(&self.cmd_dec)
+    fn image_decode(&self) -> Result<tempfile::NamedTempFile, Box<dyn Error>> {
+        let mut tf = tempfile::NamedTempFile::new()?;
+        let tf_out = tempfile::Builder::new().suffix(".png").tempfile()?;
+        tf.write_all(&self.image)?;
+        let outp = std::process::Command::new(&self.cmd_dec)
             .arg(tf.path())
             .args(&self.cmd_dec_args)
             .arg(tf_out.path())
-            .output()
-            .unwrap();
-        tf_out
+            .output()?;
+        command_print_if_error(&outp)?;
+        Ok(tf_out)
     }
 
-    fn gen_from_cmd(&mut self, img_path: &str) {
+    fn gen_from_cmd(&mut self, img_path: &str) -> Result<(), Box<dyn Error>> {
         // no arguments -> return None
         if self.cmd_enc_args.contains(&"".into()) {
             self.cmd_enc_args.pop();
@@ -384,16 +390,18 @@ impl ImageBuffer {
                 .suffix(&format!(".{}", self.ext))
                 .tempfile()
                 .unwrap();
-            std::process::Command::new(&self.cmd_enc)
+            let outp = std::process::Command::new(&self.cmd_enc)
                 .arg(img_path)
                 .args(&self.cmd_enc_args)
                 .arg(buffer.path())
                 .output()
                 .unwrap();
+            command_print_if_error(&outp)?;
             self.image = std::fs::read(buffer.path()).unwrap();
             buffer.close().unwrap();
             // println!("{}", std::str::from_utf8(&output.stderr).unwrap());
         }
+        Ok(())
     }
 }
 
@@ -411,6 +419,41 @@ pub fn input_get_from_cwd(input: &mut Vec<String>) {
 pub fn input_filter_images(input: &mut Vec<String>) {
     let image_formats = ["png", "jpg", "webp"];
     input.retain(|i| image_formats.iter().any(|&format| i.ends_with(format)));
+}
+
+fn get_image_size(img: &str) -> Result<(u32, u32), Box<dyn Error>> {
+    let outp = std::process::Command::new("identify")
+        .arg("-format")
+        .arg("%w %h")
+        .arg(img)
+        .output()?;
+    command_print_if_error(&outp)?;
+    let ret = std::str::from_utf8(&outp.stdout)
+        .unwrap()
+        .split_once(' ')
+        .unwrap();
+    Ok((ret.0.parse()?, ret.1.parse()?))
+}
+
+fn image_remove_alpha(img: &Path) -> Result<tempfile::NamedTempFile, Box<dyn Error>> {
+    let tf = tempfile::Builder::new().suffix(".png").tempfile()?;
+    let outp = std::process::Command::new("convert")
+        .arg(img)
+        .args(["-alpha", "off"])
+        .arg("PNG24:".to_string() + tf.path().to_str().unwrap())
+        .output()?;
+    command_print_if_error(&outp)?;
+    Ok(tf)
+}
+
+fn command_print_if_error(output: &std::process::Output) -> Result<(), Box<dyn Error>> {
+    if output.status.success() {
+        Ok(())
+    } else {
+        println!("{}", std::str::from_utf8(&output.stderr).unwrap());
+        println!("{}", std::str::from_utf8(&output.stdout).unwrap());
+        Err("Command returned error status".into())
+    }
 }
 
 fn byte2size(num: u64) -> String {
