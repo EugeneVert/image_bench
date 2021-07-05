@@ -8,9 +8,9 @@
   `mv ./target/release/metric ./metric`
 - put `butteraugli_main` and `ssimulacra` somewhere in PATH
 - place the images to `./images`
-- add alpha chanel to the images for ssimulacra to work (avifdec always decodes avif to png as srgba?)  
+- remove alpha chanel from the images  
   ```
-  ./add_alpha.sh ./images
+  ./remove_alpha.sh ./images
   ```
 - run benchmarks  
   ```
