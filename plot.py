@@ -1,36 +1,49 @@
+import matplotlib.patheffects as plte
+import matplotlib.pyplot as plt
 import pandas as pd
-
 from numpy import linspace
 from scipy.interpolate import interp1d
 
-import matplotlib.pyplot as plt
-import matplotlib.patheffects as plte
 # from matplotlib.ticker import ScalarFormatter
 
 
 def add_q_reader(readers, dir, ext):
-    f = open(dir + '/average.csv', 'r', newline='')
-    r = pd.read_csv(f, sep='\t')
-    args = " ".join(r["Method"][0].split(" ")[3:])
-    a = r["Method"].map(lambda x: x.split(" ")[2])
+    csv_file = open(dir + '/average.csv', 'r', newline='')
+    csv_reader = pd.read_csv(csv_file, sep='\t')
+    args = " ".join(csv_reader["Method"][0].split(" ")[3:])
+    quality = csv_reader["Method"].map(lambda x: x.split(" ")[2])
 
-    r["Method"].update(a)
-    r.drop_duplicates(subset=["Res bpp"], inplace=True, ignore_index=True)
+    csv_reader["Method"].update(quality)
+    csv_reader.drop_duplicates(subset=["Res bpp"], inplace=True, ignore_index=True)
     if ext == "jxl":
-        readers["cjxl -q N " + args] = r
+        readers["cjxl -q N " + args] = csv_reader
     if ext == "webp":
-        readers["webp -q N " + args] = r
+        readers["cwebp -q N " + args] = csv_reader
+    if ext == "avif":
+        readers["cavif -q N " + args] = csv_reader
+
+
+def add_cq_reader(readers, dir):
+    csv_file = open(dir + '/average.csv', 'r', newline='')
+    csv_reader = pd.read_csv(csv_file, sep='\t')
+    # avifenc -a cq-level="${q}"
+    args = " ".join(csv_reader["Method"][0].split(" ")[3:])
+    quality = csv_reader["Method"].map(lambda x: x.split(" ")[2].split("cq-level=")[1])
+
+    csv_reader["Method"].update(quality)
+    csv_reader.drop_duplicates(subset=["Res bpp"], inplace=True, ignore_index=True)
+    readers["avifenc -a cq-level=N " + args] = csv_reader
 
 
 def add_avif_reader(readers, dir):
-    f = open(dir + '/average.csv', 'r', newline='')
-    r = pd.read_csv(f, sep='\t')
-    args = " ".join(r["Method"][0].split("--max ")[1].split(" ")[1:])
-    a = r["Method"].map(lambda x: x.split("--max ")[1].split(" ")[0])
-    r["Method"].update(a)
-    r.drop_duplicates(subset=["Res bpp"], inplace=True, ignore_index=True)
+    csv_file = open(dir + '/average.csv', 'r', newline='')
+    csv_reader = pd.read_csv(csv_file, sep='\t')
 
-    readers["avifenc --min (N-2) --max N " + args] = r
+    args = " ".join(csv_reader["Method"][0].split("--max ")[1].split(" ")[1:])
+    quality = csv_reader["Method"].map(lambda x: x.split("--max ")[1].split(" ")[0])
+    csv_reader["Method"].update(quality)
+    csv_reader.drop_duplicates(subset=["Res bpp"], inplace=True, ignore_index=True)
+    readers["avifenc --min (N-2) --max N " + args] = csv_reader
 
 
 def plot_init():
